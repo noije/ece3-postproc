@@ -1,16 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Must be called from timeseries.sh, where DATADIR (ie output from hiresclim2) is defined.
-
-set -ue
-
+set -eu
 export HERE=`pwd`
+
 export PYTHONPATH=${HERE}/scripts/barakuda_modules
 
 usage()
 {
     echo
-    echo "USAGE: ${0}  -R <run name> (options)"
+    echo "USAGE: ${0} -R <run name> (options)"
     echo
     echo "   OPTIONS:"
     echo "      -y <YYYY>    => force initial year to YYYY"
@@ -47,13 +45,13 @@ echo
 echo " *** TMPDIR_ROOT = ${TMPDIR_ROOT}"
 echo " *** POST_DIR = ${POST_DIR}"
 echo " *** DIR_TIME_SERIES = ${DIR_TIME_SERIES}"
-echo " *** RHOST = ${RHOST}"
-echo " *** RUSER = ${RUSER}"
-echo " *** WWW_DIR_ROOT = ${WWW_DIR_ROOT}"
+echo " *** RHOST = ${RHOST:=}"
+echo " *** RUSER = ${RUSER:=}"
+echo " *** WWW_DIR_ROOT = ${WWW_DIR_ROOT:=}"
 echo
-echo; echo
 
-sleep 3
+# Root path for temporary directory:
+TMPDIR=${TMPDIR_ROOT}
 
 # On what variable should we test files:
 cv_test="sosstsst"
@@ -85,13 +83,13 @@ fi
 
 RWWWD=${WWW_DIR_ROOT}/time_series/${RUN}
 
-echo; echo " Runs to be treated: ${RUN}"; echo
+echo " Runs to be treated: ${RUN}"; echo
 
 # where to create diagnostics:
 export DIAG_D=${DIR_TIME_SERIES}/ocean
 
 if [ ${IFORCENEW} -eq 1 ]; then
-    echo; echo "Forcing clean restart! => removing ${DIAG_D}"
+    echo "Forcing clean restart! => removing ${DIAG_D}"
     rm -rf ${DIAG_D}
     echo
 fi
@@ -99,33 +97,35 @@ fi
 # Need to know first and last year
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ca=`\ls $DATADIR/Post_????/*_${cv_test}.nc | head -1` ; ca=`basename ${ca}` ;
+ca=`\ls ${DATADIR}/Post_????/*_${cv_test}.nc | head -1` ; ca=`basename ${ca}` ;
 export YEAR_INI=`echo ${ca} | sed -e "s/${RUN}_//g" -e "s/_${cv_test}.nc//g"`
 
-ca=`\ls $DATADIR/Post_????/*_${cv_test}.nc | tail -1` ; ca=`basename ${ca}` ;
+ca=`\ls ${DATADIR}/Post_????/*_${cv_test}.nc | tail -1` ; ca=`basename ${ca}` ;
 export YEAR_END=`echo ${ca} | sed -e "s/${RUN}_//g" -e "s/_${cv_test}.nc//g"`
 
-# Checking if they at least are integers:
-if [[ ! ${YEAR_INI} =~ ^[0-9]+$ ]]
+# Checking if they at least are 4-digits integers
+if [[ ! ${YEAR_INI} =~ ^[0-9]{4}$ ]]
 then
     echo "ERROR: it was imposible to guess initial year from your input files"
     echo "       maybe the directory contains non-related files..."
-    echo "      => use the -y <YEAR> switch to force the initial year!"; exit 1
+    echo "      => use the -y <YEAR> switch to force the initial year!"; exit
 fi
-
-if [[ ! ${YEAR_END} =~ ^[0-9]+$ ]]
+if [[ ! ${YEAR_END} =~ ^[0-9]{4}$ ]]
 then
     echo "ERROR: it was imposible to guess the year coresponding to the last saved year!"
-    echo "       => check your IFS output directory and file naming..."; exit 1
+    echo "       => check your NEMO output directory and file naming..."; exit
 fi
 
 # Checking if analysis has been run previously
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 FILELIST=(${DIAG_D}/${RUN}*.nc)
+BASE_YEAR_INI=
+
 if [ -e ${FILELIST[0]}  ] ; then
     echo " Timeseries analysis has been performed and files has been saved..." ; echo
     OLD_SUPA_FILE=$( ls -tr ${DIAG_D}/${RUN}_${YEAR_INI}*.nc | tail -1 )
-    OLD_YEAR_END=$( echo $( basename ${OLD_SUPA_FILE} ) | cut -f3 -d "_" )
-
+    OLD_YEAR_END=$(basename $OLD_SUPA_FILE | sed "s|${RUN}_${YEAR_INI}_\(....\).*|\1|")
+    
     if [[ ${OLD_YEAR_END} -ne ${YEAR_END} ]] ; then
          BASE_YEAR_INI=${YEAR_INI}
          YEAR_INI=$(( ${OLD_YEAR_END} + 1 ))
@@ -136,16 +136,14 @@ if [ -e ${FILELIST[0]}  ] ; then
              exit
          fi
     fi
-
 fi
 
-echo " Initial year guessed from stored files => ${YEAR_INI}"; echo
+echo " Initial year guessed from stored files => ${YEAR_INI}"
 echo " Last year guessed from stored files => ${YEAR_END}"; echo
 if [ ${iforcey0} -eq 1 ]; then
     export YEAR_INI=${YEAR0}
     echo " Initial year forced to ${YEAR_INI}"; echo
 fi
-
 
 #PD: check to have more than one year
 if [ ${YEAR_INI} -eq ${YEAR_END} ] ; then
@@ -157,8 +155,6 @@ export SUPA_FILE=${DIAG_D}/${RUN}_${YEAR_INI}_${YEAR_END}_time-series_ocean.nc
 # ~~~~~~~~~~~~~~~~~~~~~~~`
 
 jyear=${YEAR_INI}
-
-d_n=${0%/*}
 
 #PD add sowaflup
 avars_2d="sosstsst sosaline sossheig sowaflup"
@@ -174,7 +170,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
     # Temporary directory:
     rand_strg=`dd if=/dev/urandom count=128 bs=1 2>&1 | md5sum | cut -b-8`
-    TMPD=${TMPDIR_ROOT}/ocean_time_series.${RUN}.${rand_strg}
+    TMPD=${TMPDIR}/ocean_time_series.${RUN}.${rand_strg}
     mkdir -p ${TMPD} || exit
 
     jyear=${YEAR_INI}
@@ -189,23 +185,21 @@ if [ ${IPREPHTML} -eq 0 ]; then
         echo; echo " **** year = ${jyear}"
 
         # Testing if the current year has been done
-        ftst=$DATADIR/Post_????/${RUN}_${jyear}_${cv_test}.nc
+        ftst=${DATADIR}/Post_????/${RUN}_${jyear}_${cv_test}.nc
 
         if [ ! -f ${ftst} ]; then
             echo "Year ${jyear} is not completed yet:"; echo " => ${ftst} is missing"; echo
             icontinue=0
-            #echo "`expr ${jyear} - 1`" > ${fcompletion}
         fi
 
         if [ ${icontinue} -eq 1 ]; then
-
-            echo; echo; echo;
+            echo
             echo " Starting diagnostic for ${RUN} for year ${jyear} !"
-            echo; echo
+            echo
 
             nbday=365
             if [ `is_leap ${jyear}` -eq 1 ]; then
-                echo; echo " ${jyear} is leap!!!!"; echo
+                echo " ${jyear} is leap!!!!"; echo
                 nbday=366
             fi
 
@@ -219,17 +213,16 @@ if [ ${IPREPHTML} -eq 0 ]; then
                 if [ ! -f ./${cf} ]; then
                     if [ -f ${POST_DIR}/${cf} ]; then
                         echo "Copying ${cf} from ${POST_DIR}/"
-                        #PD: linking instead of copying
-                        ln -s ${POST_DIR}/${cf} .
+			#PD: linking instead of copying
+			ln -s ${POST_DIR}/${cf} .
                         #cp -L ${POST_DIR}/${cf} .
                     elif [ -f ${NEMO_MESH_DIR}/${cf} ]; then
                         echo "Copying ${cf} from ${NEMO_MESH_DIR}/"
-                        #PD: linking instead of copying
+			#PD: linking instead of copying
                         ln -s ${NEMO_MESH_DIR}/${cf} .
                         #cp -L ${NEMO_MESH_DIR}/${cf} .
                     else
-                        echo " ${cf} could not be found anywhere! "
-                        exit 1
+                        echo " ${cf} could not be found anywhere! "; exit
                     fi
                 fi
             done
@@ -241,7 +234,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
             jv=0
             for cvar in ${avars_2d[*]}; do
 
-                f_in=$DATADIR/Post_????/${RUN}_${jyear}_${cvar}_mean.nc
+                f_in=${DATADIR}/Post_????/${RUN}_${jyear}_${cvar}_mean.nc
 
                 if [ -f ${f_in} ]; then
 
@@ -260,23 +253,25 @@ if [ ${IPREPHTML} -eq 0 ]; then
                     #   ncrename -h -v time_counter,time  tmpB.nc -o tmpC.nc
                     #fi
                     #LOLO. --------------------
-                    
+
+                   ncap2 -h -O -s 'time_counter=double(time_counter)' tmp.nc tmp.nc 
+
 		    # Creating time vector if first year:
                     if [ ${jv} -eq 0 ]; then
                         rm -f time_${jyear}.nc
-                        $NCAP -3 -h -O -s "time_counter=(time_counter/(24.*3600.)+15.5)/${nbday}" tmp.nc -o tmp0.nc
-                        $NCAP -3 -h -O -s "time_counter=time_counter-time_counter(0)+${jyear}+15.5/${nbday}" \
+                        ncap2 -h -O -s "time_counter=(time_counter/(24.*3600.)+15.5)/${nbday}" tmp.nc -o tmp0.nc
+			ncap2 -h -O -s "time_counter=time_counter-time_counter(0)+${jyear}+15.5/${nbday}" \
                             -s "time_counter@units=\"years\"" tmp0.nc -o tmp2.nc
-                        ncks -3 -h -O -v time_counter tmp2.nc -o time_${jyear}.nc
+                        ncks -h -O -v time_counter tmp2.nc -o time_${jyear}.nc
                         rm -f tmp0.nc tmp2.nc
                     fi
 
                     # Appending correct time array into tmp.nc:
-                    ncks -3 -A -h -v time_counter time_${jyear}.nc -o tmp.nc
+                    ncks -A -h -v time_counter time_${jyear}.nc -o tmp.nc
 
                     echo
-                    echo "ncks -3 -A -v ${cvar} tmp.nc -o ${SUPA_Y}"
-                    ncks -3 -h -A -v ${cvar} tmp.nc -o ${SUPA_Y}
+                    echo "ncks -A -v ${cvar} tmp.nc -o ${SUPA_Y}"
+                    ncks -h -A -v ${cvar} tmp.nc -o ${SUPA_Y}
 
                     rm -f tmp.nc
 
@@ -297,25 +292,27 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
             for cvar in ${avars_3d[*]}; do
 
-                f_in=$DATADIR/Post_????/${RUN}_${jyear}_${cvar}_mean.nc
+                f_in=${DATADIR}/Post_????/${RUN}_${jyear}_${cvar}_mean.nc
 
                 if [ -f ${f_in} ]; then
 
                     ncks -O  -v mean_${cvar},mean_3D${cvar} ${f_in} -o tmp.nc
                     ncrename -v mean_${cvar},${cvar} -v  mean_3D${cvar},${cvar}_3d    tmp.nc
 
-                    # Creating time vector if first year:
+                   ncap2 -h -O -s 'time_counter=double(time_counter)' tmp.nc tmp.nc 
+
+                   # Creating time vector if first year:
                     if [ ! -f time_${jyear}.nc ]; then
                         echo "PROBLEM: time_${jyear}.nc not here!!!"; exit
                     fi
 
                     # Creating correct time array:
-                    ncks -3 -A -h -v time_counter time_${jyear}.nc -o tmp.nc
+                    ncks -A -h -v time_counter time_${jyear}.nc -o tmp.nc
 
                     echo
-                    echo "ncks -3 -A -v ${cvar} tmp.nc -o ${SUPA_Y}"
-                    ncks -3 -h -A -v ${cvar}     tmp.nc -o ${SUPA_Y}
-                    ncks -3 -h -A -v ${cvar}_3d  tmp.nc -o ${SUPA_Y}
+                    echo "ncks -A -v ${cvar} tmp.nc -o ${SUPA_Y}"
+                    ncks -h -A -v ${cvar}     tmp.nc -o ${SUPA_Y}
+                    ncks -h -A -v ${cvar}_3d  tmp.nc -o ${SUPA_Y}
 
                     rm -f tmp.nc
 
@@ -336,10 +333,10 @@ if [ ${IPREPHTML} -eq 0 ]; then
             echo
             echo "Doing AMOC"
 
-            f_in=$DATADIR/Post_????/${RUN}_${jyear}_moc.nc
+            f_in=${DATADIR}/Post_????/${RUN}_${jyear}_moc.nc
 
-            # TODO does not work with ncap
-            if [ -f ${f_in} ] && [ "$NCAP" == "ncap2" ] ; then
+            if [ -f ${f_in} ]; then
+
 
                 # removing degenerate x dimension:
                 ncwa -3 -O -a x ${f_in} -o moc_tmp.nc
@@ -364,18 +361,20 @@ if [ ${IPREPHTML} -eq 0 ]; then
                     lm1=`expr ${ll} - 1` ; lp1=`expr ${ll} + 1`
 
                     # Only range of latitude and depth we want:
-                    $NCAP -3 -O -h -s "dlat= ((nav_lat >=  ${lm1})&&(nav_lat <  ${lp1}));" -s 'dz= ((depthw < -500)&&(depthw >= -1500));' moc_tmp.nc -o tmp0.nc
-                    $NCAP -3 -O -h -s "x1=dlat*zomsfatl" tmp0.nc -o tmp1.nc
-                    $NCAP -3 -O -h -s "max_amoc_${ll}N=dz*x1"   tmp1.nc -o tmp0.nc
+                    ncap2 -3 -O -h -s "dlat= ((nav_lat >=  ${lm1})&&(nav_lat <  ${lp1}));" -s 'dz= ((depthw < -500)&&(depthw >= -1500));' moc_tmp.nc -o tmp0.nc
+                    ncap2 -3 -O -h -s "x1=dlat*zomsfatl" tmp0.nc -o tmp1.nc
+                    ncap2 -3 -O -h -s "max_amoc_${ll}N=dz*x1"   tmp1.nc -o tmp0.nc
 
                     # Maximum on this remaining y,depthw box:
                     echo "ncwa -O -y max -v max_amoc_${ll}N  -a y,depthw   tmp0.nc -o tmp.nc"
                     ncwa -O -y max -v max_amoc_${ll}N  -a y,depthw   tmp0.nc -o tmp.nc
 
-                    $NCAP -3 -O -h -s "max_amoc_${ll}N@units=\"Sv\"" \
+                    ncap2 -3 -O -h -s "max_amoc_${ll}N@units=\"Sv\"" \
                         -s "max_amoc_${ll}N@long_name=\"Maximum of Atlantic MOC at ${ll}N\""  tmp.nc -o tmp.nc
 
                     rm -f tmp1.nc tmp0.nc
+
+                    ncap2 -3 -h -O -s 'time_counter=double(time_counter)' tmp.nc tmp.nc 
 
                     echo "ncks -3 -A -h -v time_counter time_${jyear}.nc -o tmp.nc"
                     ncks -3 -A -h -v time_counter time_${jyear}.nc -o tmp.nc
@@ -404,10 +403,9 @@ if [ ${IPREPHTML} -eq 0 ]; then
             echo "Doing Sea-Ice diag"
 
             cvar="iiceconc"
-            f_in=$DATADIR/Post_????/${RUN}_${jyear}_${cvar}.nc
+            f_in=${DATADIR}/Post_????/${RUN}_${jyear}_${cvar}.nc
 
-            # TODO does not work with ncap
-            if [ -f ${f_in} ] && [ "$NCAP" == "ncap2" ] ; then
+            if [ -f ${f_in} ]; then
 
                 rm -f tmp*.nc
 
@@ -421,10 +419,10 @@ if [ ${IPREPHTML} -eq 0 ]; then
                 echo "ncwa -3 -O -a t,z tmp.nc mask_no_tz.nc ; rm tmp.nc"
                 ncwa -3 -O -a t,z tmp.nc mask_no_tz.nc ; rm tmp.nc
 
-                $NCAP -3 -A -h -s 'mN= (nav_lat >=  50);' mask_no_tz.nc -o mask_no_tz.nc
-                $NCAP -3 -A -h -s 'mS= (nav_lat <= -45);' mask_no_tz.nc -o mask_no_tz.nc
-                $NCAP -3 -A -h -s "tmasknorth=mN*tmask"   mask_no_tz.nc -o mask_no_tz.nc
-                $NCAP -3 -A -h -s "tmasksouth=mS*tmask"   mask_no_tz.nc -o mask_no_tz.nc
+                ncap2 -3 -A -h -s 'mN= (nav_lat >=  50);' mask_no_tz.nc -o mask_no_tz.nc
+                ncap2 -3 -A -h -s 'mS= (nav_lat <= -45);' mask_no_tz.nc -o mask_no_tz.nc
+                ncap2 -3 -A -h -s "tmasknorth=mN*tmask"   mask_no_tz.nc -o mask_no_tz.nc
+                ncap2 -3 -A -h -s "tmasksouth=mS*tmask"   mask_no_tz.nc -o mask_no_tz.nc
 
                 echo "ncks -3 -O -v tmasknorth,tmasksouth  mask_no_tz.nc   -o tmp0.nc ; rm -f mask_no_tz.nc"
                 ncks -3 -O -v tmasknorth,tmasksouth  mask_no_tz.nc   -o tmp0.nc ; rm -f mask_no_tz.nc
@@ -459,16 +457,16 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
                     cv=${cvar}_${hs}
 
-                    echo "$NCAP -3 -h -O -s "${cv}=${cvar}*tmask${hs}"  tmp0.nc -o tmp_${hs}.nc"
-                    $NCAP -3 -h -O -s "${cv}=${cvar}*tmask${hs}"  tmp0.nc -o tmp_${hs}.nc
+                    echo "ncap2 -3 -h -O -s "${cv}=${cvar}*tmask${hs}"  tmp0.nc -o tmp_${hs}.nc"
+                    ncap2 -3 -h -O -s "${cv}=${cvar}*tmask${hs}"  tmp0.nc -o tmp_${hs}.nc
 
                     echo "ncks -3 -A -v e1t,e2t tmp_e1t_e2t.nc tmp_${hs}.nc"
                     ncks -3 -A -v e1t,e2t tmp_e1t_e2t.nc tmp_${hs}.nc
 
-                    echo "$NCAP -3 -h -O -s "area_ice_${hs}=${cv}*e1t*e2t" tmp_${hs}.nc -o tmp_${hs}.nc"
-                    $NCAP -3 -h -O -s "area_ice_${hs}=${cv}*e1t*e2t" tmp_${hs}.nc -o tmp_${hs}.nc
+                    echo "ncap2 -3 -h -O -s "area_ice_${hs}=${cv}*e1t*e2t" tmp_${hs}.nc -o tmp_${hs}.nc"
+                    ncap2 -3 -h -O -s "area_ice_${hs}=${cv}*e1t*e2t" tmp_${hs}.nc -o tmp_${hs}.nc
 
-                    $NCAP -3 -h -O -s "tot_area_ice_${hs}=area_ice_${hs}.total(\$y,\$x)" \
+                    ncap2 -3 -h -O -s "tot_area_ice_${hs}=area_ice_${hs}.total(\$y,\$x)" \
                         -s "tot_area_ice_${hs}@units=\"m^2\"" tmp_${hs}.nc -o tmp_${hs}.nc
 
                     echo "ncks -3 -A -h -v time_counter time_${jyear}.nc -o tmp_${hs}.nc"
@@ -484,6 +482,11 @@ if [ ${IPREPHTML} -eq 0 ]; then
             else
                 echo; echo " *** File ${f_in} not here! Skipping variable ${cvar}!"
             fi
+
+
+
+
+
 
 
 
@@ -521,7 +524,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
     echo
 
     #Concatenate new and old files... 
-    if [[ ! -z ${BASE_YEAR_INI:-} ]] ; then
+    if [[ ! -z ${BASE_YEAR_INI} ]] ; then
          echo " Concatenate old and new netcdf files... " 
          ncrcat -h ${OLD_SUPA_FILE} ${SUPA_FILE} ${DIAG_D}/${RUN}_${BASE_YEAR_INI}_${YEAR_END}_time-series_ocean.nc
          rm ${OLD_SUPA_FILE} ${SUPA_FILE}
@@ -529,10 +532,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
          echo " Variables saved in ${RUN}_${BASE_YEAR_INI}_${YEAR_END}_time-series_ocean.nc " ; echo
     fi
 
-
-
 fi # [ ${IPREPHTML} -eq 0 ]
-
 
 
 if [ ${IPREPHTML} -eq 1 ]; then
@@ -575,3 +575,6 @@ if [ ${IPREPHTML} -eq 1 ]; then
     echo; echo
 
 fi # [ ${IPREPHTML} -eq 1 ]
+
+
+#rm -rf ${TMPD}

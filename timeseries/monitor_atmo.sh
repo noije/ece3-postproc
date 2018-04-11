@@ -1,11 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Must be called from timeseries.sh, where DATADIR (ie output from hiresclim2) is defined.
-
-set -ue
+set -eu
 export HERE=`pwd`
-export PYTHONPATH=${HERE}/scripts/barakuda_modules
 
+export PYTHONPATH=${HERE}/scripts/barakuda_modules
 
 usage()
 {
@@ -34,7 +32,7 @@ while getopts R:y:t:foeh option ; do
         R) RUN=${OPTARG};;
         y) YEAR0=${OPTARG} ; iforcey0=1 ;;
         f) IFORCENEW=1;;
-        o) CONTINUE=1 ;;
+	o) CONTINUE=1 ;;
         e) IPREPHTML=1;;
         h)  usage;;
         \?) usage ;;
@@ -49,12 +47,14 @@ echo
 echo " *** TMPDIR_ROOT = ${TMPDIR_ROOT}"
 echo " *** POST_DIR = ${POST_DIR}"
 echo " *** DIR_TIME_SERIES = ${DIR_TIME_SERIES}"
-echo " *** RHOST = ${RHOST}"
-echo " *** RUSER = ${RUSER}"
-echo " *** WWW_DIR_ROOT = ${WWW_DIR_ROOT}"
+echo " *** RHOST = ${RHOST:=}"
+echo " *** RUSER = ${RUSER:=}"
+echo " *** WWW_DIR_ROOT = ${WWW_DIR_ROOT:=}"
+echo " *** PYTHONPATH = ${PYTHONPATH}"
 echo
-echo; echo
 
+# Root path for temporary directory:
+TMPDIR=${TMPDIR_ROOT}
 
 # On what variable should we test files:
 cv_test="msl"
@@ -84,17 +84,15 @@ if [ "${RUN}" = "" ]; then
     exit
 fi
 
-RWWWD=${WWW_DIR_ROOT}/timeseries/${RUN}
+RWWWD=${WWW_DIR_ROOT}/time_series/${RUN}
 
-echo; echo " Runs to be treated: ${RUN}"; echo
+echo " Runs to be treated: ${RUN}"; echo
 
-
-# where to create diagnostics
+# where to create diagnostics:
 export DIAG_D=${DIR_TIME_SERIES}/atmosphere
 
-
 if [ ${IFORCENEW} -eq 1 ]; then
-    echo; echo "Forcing clean restart! => removing ${DIAG_D}"
+    echo "Forcing clean restart! => removing ${DIAG_D}"
     rm -rf ${DIAG_D}
     echo
 fi
@@ -102,47 +100,48 @@ fi
 # Need to know first and last year
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-ca=`\ls $DATADIR/Post_????/*_${cv_test}.nc | head -1` ; ca=`basename ${ca}` ;
+ca=`\ls ${DATADIR}/Post_????/*_${cv_test}.nc | head -1` ; ca=`basename ${ca}` ;
 export YEAR_INI=`echo ${ca} | sed -e "s/${RUN}_//g" -e "s/_${cv_test}.nc//g"`
 
-ca=`\ls $DATADIR/Post_????/*_${cv_test}.nc | tail -1` ; ca=`basename ${ca}` ;
+ca=`\ls ${DATADIR}/Post_????/*_${cv_test}.nc | tail -1` ; ca=`basename ${ca}` ;
 export YEAR_END=`echo ${ca} | sed -e "s/${RUN}_//g" -e "s/_${cv_test}.nc//g"`
 
-# Checking if they at least are integers:
-if [[ ! ${YEAR_INI} =~ ^[0-9]+$ ]]
+# Checking if they at least are 4-digits integers
+if [[ ! ${YEAR_INI} =~ ^[0-9]{4}$ ]]
 then
     echo "ERROR: it was imposible to guess initial year from your input files"
     echo "       maybe the directory contains non-related files..."
-    echo "      => use the -y <YEAR> switch to force the initial year!"; exit 1
+    echo "      => use the -y <YEAR> switch to force the initial year!"; exit
 fi
-
-if [[ ! ${YEAR_END} =~ ^[0-9]+$ ]]
+if [[ ! ${YEAR_END} =~ ^[0-9]{4}$ ]]
 then
     echo "ERROR: it was imposible to guess the year coresponding to the last saved year!"
-    echo "       => check your IFS output directory and file naming..."; exit 1
+    echo "       => check your IFS output directory and file naming..."; exit
 fi
 
 # Checking if analysis has been run previously
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 FILELIST=(${DIAG_D}/${RUN}*.nc)
+BASE_YEAR_INI=
+
 if [ -e ${FILELIST[0]}  ] ; then
     echo " Timeseries analysis has been performed and files has been saved..." ; echo
     OLD_SUPA_FILE=$( ls -tr ${DIAG_D}/${RUN}_${YEAR_INI}*.nc | tail -1 )
-    OLD_YEAR_END=$( echo $( basename ${OLD_SUPA_FILE} ) | cut -f3 -d "_" )
-
+    OLD_YEAR_END=$(basename $OLD_SUPA_FILE | sed "s|${RUN}_${YEAR_INI}_\(....\).*|\1|")
+    
     if [[ ${OLD_YEAR_END} -ne ${YEAR_END} ]] ; then
-        BASE_YEAR_INI=${YEAR_INI}
-        YEAR_INI=$(( ${OLD_YEAR_END} + 1 ))
-        echo " Initial year forced to ${YEAR_INI}"; echo
+         BASE_YEAR_INI=${YEAR_INI}
+         YEAR_INI=$(( ${OLD_YEAR_END} + 1 ))
+         echo " Initial year forced to ${YEAR_INI}"; echo
     else
-        echo " Values up to date!" ; echo
-        if [[ $IPREPHTML -eq 0 ]] ; then
-            exit
-        fi
+         echo " Values up to date!" ; echo
+         if [[ $IPREPHTML -eq 0 ]] ; then
+             exit
+         fi
     fi
 fi
 
-
-echo " Initial year guessed from stored files => ${YEAR_INI}"; echo
+echo " Initial year guessed from stored files => ${YEAR_INI}"
 echo " Last year guessed from stored files => ${YEAR_END}"; echo
 if [ ${iforcey0} -eq 1 ]; then
     export YEAR_INI=${YEAR0}
@@ -151,12 +150,9 @@ fi
 
 export SUPA_FILE=${DIAG_D}/${RUN}_${YEAR_INI}_${YEAR_END}_time-series_atmo.nc
 
-
 # ~~~~~~~~~~~~~~~~~~~~~~~`
 
 jyear=${YEAR_INI}
-
-d_n=${0%/*}
 
 avars="sf tas msl tcc totp e sshf slhf ssr str tsr ttr"
 
@@ -191,24 +187,21 @@ if [ ${IPREPHTML} -eq 0 ]; then
         echo; echo " **** year = ${jyear}"
 
         # Testing if the current year has been done
-        ftst=$DATADIR/Post_????/${RUN}_${jyear}_${cv_test}.nc
+        ftst=${DATADIR}/Post_????/${RUN}_${jyear}_${cv_test}.nc
 
         if [ ! -f ${ftst} ]; then
             echo "Year ${jyear} is not completed yet:"; echo " => ${ftst} is missing"; echo
             icontinue=0
-            #echo "`expr ${jyear} - 1`" > ${fcompletion}
         fi
 
-
         if [ ${icontinue} -eq 1 ]; then
-
-            echo; echo; echo;
+            echo
             echo " Starting diagnostic for ${RUN} for year ${jyear} !"
-            echo; echo
+            echo
 
             nbday=365
             if [ `is_leap ${jyear}` -eq 1 ]; then
-                echo; echo " ${jyear} is leap!!!!"; echo
+                echo " ${jyear} is leap!!!!"; echo
                 nbday=366
             fi
 
@@ -221,8 +214,8 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
                 rm -f tmp.nc tmp2.nc
 
-                echo "cdo -R -t -fldmean $DATADIR/Post_????/${RUN}_${jyear}_${cvar}.nc tmp0.nc"
-                cdo -R -fldmean $DATADIR/Post_????/${RUN}_${jyear}_${cvar}.nc tmp0.nc
+                echo "cdo -R -t -fldmean ${DATADIR}/Post_????/${RUN}_${jyear}_${cvar}.nc tmp0.nc"
+                cdo -R -fldmean ${DATADIR}/Post_????/${RUN}_${jyear}_${cvar}.nc tmp0.nc
                 echo
                 
                 ncwa -3 -O -a lat,lon tmp0.nc -o tmp.nc ; rm tmp0.nc ; # removing degenerate lat and lon dimensions
@@ -230,8 +223,8 @@ if [ ${IPREPHTML} -eq 0 ]; then
                 # Creating time vector if first year:
                 if [ ${jv} -eq 0 ]; then
                     rm -f time_${jyear}.nc
-                    $NCAP -3 -h -O -s "time=(time/24.+15.5)/${nbday}" tmp.nc -o tmp0.nc
-                    $NCAP -3 -h -O -s "time=time-time(0)+${jyear}+15.5/${nbday}" \
+                    ncap2 -3 -h -O -s "time=(time/24.+15.5)/${nbday}" tmp.nc -o tmp0.nc
+                    ncap2 -3 -h -O -s "time=time-time(0)+${jyear}+15.5/${nbday}" \
                         -s "time@units=\"years\"" tmp0.nc -o tmp2.nc
                     ncks -3 -h -O -v time tmp2.nc -o time_${jyear}.nc
                     rm -f tmp0.nc tmp2.nc
@@ -239,7 +232,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
                 # Creating correct time array:
                 ncks -3 -A -h -v time time_${jyear}.nc -o tmp.nc
-                $NCAP -3 -h -O -s "time=time+${jyear}" -s "time@units=\"years\"" tmp.nc -o tmp2.nc
+                ncap2 -3 -h -O -s "time=time+${jyear}" -s "time@units=\"years\"" tmp.nc -o tmp2.nc
                 rm -f tmp.nc
 
                 #if [ ! "${cvar}" = "${cvar_nc}" ]; then
@@ -260,7 +253,7 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
             # Correcting water flux units, from kg/m^2/s to mm/day => *24*3600 = *86400
             for cv in "totp" "e"; do
-                $NCAP -3 -h -O -s "${cv}=86400.*${cv}" -s "${cv}@units=\"mm/day\"" ${SUPA_Y} -o ${SUPA_Y}
+                ncap2 -3 -h -O -s "${cv}=86400.*${cv}" -s "${cv}@units=\"mm/day\"" ${SUPA_Y} -o ${SUPA_Y}
             done
 
             # Correcting heat fluxes:
@@ -270,12 +263,11 @@ if [ ${IPREPHTML} -eq 0 ]; then
 
             # Pressure to hPa:
             cv='msl'
-            $NCAP -3 -h -O -s "${cv}=0.01*${cv}" -s "${cv}@units=\"hPa\"" ${SUPA_Y} -o ${SUPA_Y}
+            ncap2 -3 -h -O -s "${cv}=0.01*${cv}" -s "${cv}@units=\"hPa\"" ${SUPA_Y} -o ${SUPA_Y}
 
             # T2m to C:
             cv='tas'
-            $NCAP -3 -h -O -s "${cv}=${cv}-273.15" -s "${cv}@units=\"deg.C\"" ${SUPA_Y} -o ${SUPA_Y}
-
+            ncap2 -3 -h -O -s "${cv}=${cv}-273.15" -s "${cv}@units=\"deg.C\"" ${SUPA_Y} -o ${SUPA_Y}
 
 
             # Creating composite variable:
@@ -283,34 +275,33 @@ if [ ${IPREPHTML} -eq 0 ]; then
             
             # Snowfall latent heat flux
             cv='sfhf'
-            $NCAP -3 -h -O -s "${cv}=-334000*sf" -s "${cv}@units=\"W/m^2\"" \
+            ncap2 -3 -h -O -s "${cv}=-334000*sf" -s "${cv}@units=\"W/m^2\"" \
                   -s "${cv}@long_name=\"Snowfall latent heat flux\""  ${SUPA_Y} -o ${SUPA_Y}
 
             # P-E
             cv="PminE"
-            $NCAP -3 -h -O -s "${cv}=totp+e" -s "${cv}@units=\"mm/day\""  -s "${cv}@long_name=\"P-E at the surface\"" \
+            ncap2 -3 -h -O -s "${cv}=totp+e" -s "${cv}@units=\"mm/day\""  -s "${cv}@long_name=\"P-E at the surface\"" \
                 ${SUPA_Y} -o tmp.nc
             ncks -3 -h -A -v ${cv}  tmp.nc -o ${SUPA_Y}
             rm -f tmp.nc
             
             cv="NetTOA"
-            $NCAP -3 -h -O -s "${cv}=tsr+ttr" -s "${cv}@units=\"W/m^2\"" -s "${cv}@long_name=\"TOA net heat flux\"" \
+            ncap2 -3 -h -O -s "${cv}=tsr+ttr" -s "${cv}@units=\"W/m^2\"" -s "${cv}@long_name=\"TOA net heat flux\"" \
                 ${SUPA_Y} -o tmp.nc
             ncks -3 -h -A -v ${cv}  tmp.nc -o ${SUPA_Y}
             rm -f tmp.nc
 
             cv="NetSFCs"
-            $NCAP -3 -h -O -s "${cv}=sshf+slhf+ssr+str+sfhf" -s "${cv}@units=\"W/m^2\""  -s "${cv}@long_name=\"Surface net heat flux with snowfall\"" \
+            ncap2 -3 -h -O -s "${cv}=sshf+slhf+ssr+str+sfhf" -s "${cv}@units=\"W/m^2\""  -s "${cv}@long_name=\"Surface net heat flux with snowfall\"" \
                 ${SUPA_Y} -o tmp.nc
             ncks -3 -h -A -v ${cv}  tmp.nc -o ${SUPA_Y}
             rm -f tmp.nc
 
             cv="NetSFC"
-            $NCAP -3 -h -O -s "${cv}=sshf+slhf+ssr+str" -s "${cv}@units=\"W/m^2\""  -s "${cv}@long_name=\"Surface net heat flux\"" \
+            ncap2 -3 -h -O -s "${cv}=sshf+slhf+ssr+str" -s "${cv}@units=\"W/m^2\""  -s "${cv}@long_name=\"Surface net heat flux\"" \
                 ${SUPA_Y} -o tmp.nc
             ncks -3 -h -A -v ${cv}  tmp.nc -o ${SUPA_Y}
             rm -f tmp.nc
-
             
             echo " ${SUPA_Y} done..."; echo; echo
             
@@ -323,14 +314,10 @@ if [ ${IPREPHTML} -eq 0 ]; then
     ncrcat -h -O ${RUN}_*_time-series_atmo.tmp -o ${SUPA_FILE}
     
     ncrcat -O time_*.nc -o supa_time.nc
-
-    #echo "ncks -3 -A -h -v time supa_time.nc -o ${SUPA_FILE}"
+    echo "ncks -3 -A -h -v time supa_time.nc -o ${SUPA_FILE}"
     ncks -3 -A -h -v time supa_time.nc -o ${SUPA_FILE}
-    #fix the time axis since cdo does not support it
-#    cdo settaxis,${YEAR_INI}-01-01,00:00:00,1mon ${SUPA_FILE} tmp1.nc 
-#    mv tmp1.nc ${SUPA_FILE}
-
-    rm -f ${RUN}_*_time-series_atmo.tmp time_*.nc supa_time*.nc
+    
+    rm -f ${RUN}_*_time-series_atmo.tmp time_*.nc supa_time.nc
 
     rm -rf ${TMPD}
 
@@ -340,14 +327,13 @@ if [ ${IPREPHTML} -eq 0 ]; then
     echo
 
     #Concatenate new and old files... 
-    if [[ ! -z ${BASE_YEAR_INI:-} ]] ; then
+    if [[ ! -z ${BASE_YEAR_INI} ]] ; then
          echo " Concatenate old and new netcdf files... " 
          ncrcat -h ${OLD_SUPA_FILE} ${SUPA_FILE} ${DIAG_D}/${RUN}_${BASE_YEAR_INI}_${YEAR_END}_time-series_atmo.nc
          rm ${OLD_SUPA_FILE} ${SUPA_FILE}
          export SUPA_FILE=${RUN}_${BASE_YEAR_INI}_${YEAR_END}_time-series_atmo.nc
          echo " Variables saved in ${RUN}_${BASE_YEAR_INI}_${YEAR_END}_time-series_atmo.nc " ; echo
     fi
-
 
 fi # [ ${IPREPHTML} -eq 0 ]
 
@@ -378,7 +364,7 @@ if [ ${IPREPHTML} -eq 1 ]; then
         ssh ${RUSER}@${RHOST} "mkdir -p ${RWWWD}"
         echo "scp atmosphere.tar ${RUSER}@${RHOST}:${RWWWD}/"
         scp atmosphere.tar ${RUSER}@${RHOST}:${RWWWD}/
-        ssh ${RUSER}@${RHOST} "cd ${RWWWD}/; rm -rf atmosphere; tar xf atmosphere.tar 2>/dev/null; chmod go+rx atmosphere ; chmod go+r atmosphere/* ; rm atmosphere.tar"
+        ssh ${RUSER}@${RHOST} "cd ${RWWWD}/; rm -rf atmosphere; tar xf atmosphere.tar 2>/dev/null; rm atmosphere.tar"
         echo; echo
         echo "Diagnostic page installed on remote host ${RHOST} in ${RWWWD}/atmosphere!"
         echo "( Also browsable on local host in ${DIAG_D}/ )"
@@ -391,3 +377,6 @@ if [ ${IPREPHTML} -eq 1 ]; then
     echo; echo
 
 fi # [ ${IPREPHTML} -eq 1 ]
+
+
+#rm -rf ${TMPD}
